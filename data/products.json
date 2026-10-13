@@ -1,0 +1,7 @@
+[
+  { "sku": "APL-15-128", "name": "Apple iPhone 15 · 128 ГБ", "myPrice": 399990, "minPrice": 370000, "maxPrice": 420000, "step": 10, "competitors": [{ "seller": "Tech Store", "price": 384990, "inStock": true }, { "seller": "Mobile Shop", "price": 360000, "inStock": false }, { "seller": "Smart Market", "price": 389990, "inStock": true }] },
+  { "sku": "DYS-V8", "name": "Пылесос Dyson V8", "myPrice": 195000, "minPrice": 180000, "maxPrice": 210000, "step": 100, "competitors": [{ "seller": "Home Store", "price": 175000, "inStock": true }] },
+  { "sku": "SON-WH1000", "name": "Наушники Sony WH-1000XM5", "myPrice": 119990, "minPrice": 100000, "maxPrice": 125000, "step": 1, "competitors": [{ "seller": "Audio Store", "price": 150000, "inStock": true }] },
+  { "sku": "SAM-S24", "name": "Samsung Galaxy S24 · 256 ГБ", "myPrice": 359990, "minPrice": 330000, "maxPrice": 380000, "step": 0.5, "competitors": [{ "seller": "Mobile Shop", "price": 349999.9, "inStock": true }, { "seller": "Tech Store", "price": 349999.9, "inStock": true }] },
+  { "sku": "JBL-CHARGE5", "name": "Колонка JBL Charge 5", "myPrice": 89990, "minPrice": 80000, "maxPrice": 99990, "step": 50, "competitors": [{ "seller": "Audio Store", "price": 85000, "inStock": false }] }
+]

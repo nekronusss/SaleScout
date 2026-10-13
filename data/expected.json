@@ -1,0 +1,7 @@
+[
+  { "sku": "APL-15-128", "oldPrice": 399990, "newPrice": 384980, "reason": "UNDERCUT" },
+  { "sku": "DYS-V8", "oldPrice": 195000, "newPrice": 180000, "reason": "AT_MIN" },
+  { "sku": "SON-WH1000", "oldPrice": 119990, "newPrice": 125000, "reason": "AT_MAX" },
+  { "sku": "SAM-S24", "oldPrice": 359990, "newPrice": 349999, "reason": "UNDERCUT" },
+  { "sku": "JBL-CHARGE5", "oldPrice": 89990, "newPrice": 99990, "reason": "NO_COMPETITORS" }
+]
