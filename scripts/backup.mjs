@@ -1,0 +1,20 @@
+import { spawn } from 'node:child_process';
+import { mkdir, rename } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { fileURLToPath } from 'node:url';
+const root = fileURLToPath(new URL('../', import.meta.url));
+const directory = new URL('../backups/', import.meta.url);
+await mkdir(directory, { recursive: true });
+const name = `salescout-${new Date().toISOString().replaceAll(':', '-')}.dump`;
+const target = new URL(name, directory);
+const temporary = new URL(`${name}.partial`, directory);
+const composeFile = process.argv.includes('--production') ? 'compose.prod.yaml' : 'compose.yaml';
+const child = spawn('docker', ['compose', '-f', composeFile, 'exec', '-T', 'db', 'pg_dump', '-U', 'salescout', '-d', 'salescout', '-Fc'], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] });
+const completion = new Promise((resolve, reject) => {
+  child.on('error', reject);
+  child.on('close', code => code === 0 ? resolve() : reject(new Error(`pg_dump failed: ${code}; incomplete file has .partial suffix`)));
+});
+await Promise.all([pipeline(child.stdout, createWriteStream(temporary, { flags: 'wx', mode: 0o600 })), completion]);
+await rename(temporary, target);
+console.log(`Backup saved: ${fileURLToPath(target)}`);

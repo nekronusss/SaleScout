@@ -1,0 +1,45 @@
+name: salescout
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: salescout
+      POSTGRES_USER: salescout
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run npm run setup first}
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salescout -d salescout"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  mail:
+    image: axllent/mailpit:latest
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
+    restart: unless-stopped
+  app:
+    build: .
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: 3001
+      APP_ORIGIN: http://localhost:${APP_PORT:-3001}
+      DATABASE_URL: postgres://salescout:${POSTGRES_PASSWORD}@db:5432/salescout
+      SESSION_SECRET: ${SESSION_SECRET:?Run npm run setup first}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      APPLE_CLIENT_ID: ${APPLE_CLIENT_ID:-}
+      APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
+      APPLE_KEY_ID: ${APPLE_KEY_ID:-}
+      APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
+      SMTP_HOST: mail
+      SMTP_PORT: 1025
+      SMTP_FROM: SaleScout <noreply@localhost.test>
+    ports: ["127.0.0.1:${APP_PORT:-3001}:3001"]
+    depends_on:
+      db: { condition: service_healthy }
+      mail: { condition: service_started }
+    restart: unless-stopped
+volumes:
+  postgres_data:
