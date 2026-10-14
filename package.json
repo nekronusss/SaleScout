@@ -7,9 +7,14 @@
     "node": ">=20"
   },
   "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "infra": "docker compose up -d db mail",
+    "backup": "node scripts/backup.mjs",
+    "test:smoke": "node scripts/smoke.mjs",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/index.ts",
-    "dev:client": "vite --host 127.0.0.1",
+    "dev:client": "vite --host localhost",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
@@ -17,14 +22,26 @@
     "start": "node dist/server/index.js"
   },
   "dependencies": {
+    "connect-pg-simple": "^10.0.0",
+    "dotenv": "^18.0.7",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.7.1",
+    "express-session": "^1.19.0",
+    "helmet": "^8.3.0",
+    "jose": "^6.2.12",
+    "nodemailer": "^10.1.1",
+    "pg": "^8.23.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",
+    "@types/connect-pg-simple": "^7.0.3",
     "@types/express": "^5.0.0",
+    "@types/express-session": "^1.19.0",
     "@types/node": "^20.19.0",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@types/supertest": "^6.0.3",

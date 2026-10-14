@@ -1,4 +1,4 @@
-import type { Competitor, Product } from '../src/types.js';
+import type { Competitor, Product } from './types.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
