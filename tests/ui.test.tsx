@@ -1,103 +1,355 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { App } from '../client/src/App';
-import products from '../data/products.json';
-import expected from '../data/expected.json';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { App } from "../client/src/App";
+import { Auth } from "../client/src/Auth";
+import { setCsrfToken } from "../client/src/api";
+import { calculatePrice } from "../src/pricing";
+import products from "../data/products.json";
+import type { Product } from "../src/types";
+import { OAuthButtons } from "../client/src/OAuthButtons";
 
+const user = { id: "test-user", email: "test@example.com", name: "Тест" };
 const fetchMock = vi.fn<typeof fetch>();
-const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
-  status, headers: { 'Content-Type': 'application/json' },
-});
+const respond = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+let catalog: Product[];
+let version: number;
 
 beforeEach(() => {
-  vi.stubGlobal('fetch', fetchMock);
-  fetchMock.mockResolvedValue(respond(expected));
+  catalog = [];
+  version = 0;
+  setCsrfToken("a".repeat(64));
+  vi.stubGlobal("fetch", fetchMock);
+  fetchMock.mockImplementation(async (url, options) => {
+    if (url === "/api/products") {
+      if (options?.method === "PUT") {
+        const input = JSON.parse(String(options.body)) as {
+          products: Product[];
+          version: number;
+        };
+        expect(input.version).toBe(version);
+        catalog = input.products;
+        version++;
+      }
+      return respond({ products: catalog, version });
+    }
+    if (url === "/reprice")
+      return respond(
+        (JSON.parse(String(options?.body)) as Product[]).map(calculatePrice),
+      );
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
 });
-
 afterEach(() => {
   cleanup();
   fetchMock.mockReset();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
-async function openApp() {
-  render(<App />);
-  await screen.findByText('APL-15-128');
-  await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Расчёт завершён'));
+async function openApp(seed: Product[] = []) {
+  catalog = structuredClone(seed);
+  const view = render(<App user={user} onLogout={vi.fn()} />);
+  await waitFor(() =>
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Добавить товар",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false),
+  );
+  return view;
+}
+function fill(name: RegExp, value: string) {
+  fireEvent.change(screen.getByRole("textbox", { name }), {
+    target: { value },
+  });
+}
+function fillProduct() {
+  fill(/^Название товара/, "Мой телефон");
+  fill(/^Артикул/, "MY-001");
+  fill(/^Текущая цена/, "150 000,5");
+  fill(/^Минимальная цена/, "100000");
+  fill(/^Максимальная цена/, "200000");
+  fill(/^Шаг снижения/, "0,5");
+}
+function submitProduct() {
+  fireEvent.submit(screen.getByRole("form", { name: "Форма товара" }));
 }
 
-describe('React repricing page', () => {
-  it('posts products and renders server prices with names', async () => {
+describe("Product workspace", () => {
+  it("starts empty and does not automatically reprice sample data", async () => {
     await openApp();
-    expect(fetchMock).toHaveBeenCalledWith('/reprice', expect.objectContaining({
-      method: 'POST', body: JSON.stringify(products),
-    }));
-    const row = screen.getByText('APL-15-128').closest('tr');
-    expect(row?.textContent).toContain('Apple iPhone 15');
-    expect(row?.textContent?.replace(/\s/g, '')).toContain('384980₸');
-    expect(screen.getAllByRole('row')).toHaveLength(6);
+    expect(screen.getByText("Начните с первого товара")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Рассчитать цены",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
   });
 
-  it('filters by SKU and reason, with an empty search state', async () => {
+  it("creates a product through fields, adds a competitor and calculates through HTTP", async () => {
     await openApp();
-    fireEvent.change(screen.getByRole('textbox', { name: 'Поиск по названию или SKU' }), { target: { value: 'dys' } });
-    expect(screen.getAllByRole('row')).toHaveLength(2);
-    expect(screen.getByText('DYS-V8')).toBeTruthy();
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'AT_MAX' } });
-    expect(screen.getByText(/Ничего не найдено/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Добавить товар" }));
+    fillProduct();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Добавить конкурента" }),
+    );
+    fill(/^Продавец/, "Магазин");
+    fill(/^Цена конкурента/, "149999,9");
+    submitProduct();
+    await screen.findByText("MY-001");
+    expect(catalog[0]).toEqual({
+      name: "Мой телефон",
+      sku: "MY-001",
+      myPrice: 150000.5,
+      minPrice: 100000,
+      maxPrice: 200000,
+      step: 0.5,
+      competitors: [{ seller: "Магазин", price: 149999.9, inStock: true }],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/products",
+      expect.objectContaining({
+        method: "PUT",
+        headers: expect.objectContaining({ "X-CSRF-Token": "a".repeat(64) }),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Рассчитать цены" }));
+    await screen.findByText("Цены рассчитаны");
+    const row = screen.getByText("MY-001").closest("tr");
+    expect(row?.textContent?.replace(/\s/g, "")).toContain("149999₸");
+    expect(row?.textContent).toContain("Конкурентная цена");
   });
 
-  it('submits JSON, shows an empty array, and restores sample data', async () => {
+  it("validates required fields and price boundaries without sending invalid data", async () => {
     await openApp();
-    fetchMock.mockResolvedValueOnce(respond([]));
-    fireEvent.change(screen.getByLabelText('Данные товаров'), { target: { value: '[]' } });
-    fireEvent.submit(screen.getByLabelText('Данные товаров').closest('form')!);
-    await screen.findByText(/Товаров пока нет/);
-    expect(fetchMock).toHaveBeenLastCalledWith('/reprice', expect.objectContaining({ body: '[]' }));
-    fetchMock.mockResolvedValueOnce(respond(expected));
-    fireEvent.click(screen.getByRole('button', { name: 'Вернуть пример', hidden: true }));
-    await screen.findByText('APL-15-128');
-  });
-
-  it('rejects malformed JSON without sending it', async () => {
-    await openApp();
-    fireEvent.change(screen.getByLabelText('Данные товаров'), { target: { value: '{broken' } });
-    fireEvent.submit(screen.getByLabelText('Данные товаров').closest('form')!);
-    expect(screen.getByRole('alert').textContent).toContain('Некорректный JSON');
+    fireEvent.click(screen.getByRole("button", { name: "Добавить товар" }));
+    submitProduct();
+    expect(screen.getByRole("alert").textContent).toContain("выделенные поля");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fillProduct();
+    fill(/^Максимальная цена/, "99999");
+    submitProduct();
+    expect(screen.getByText(/Максимальная цена не может/)).toBeTruthy();
+    fill(/^Максимальная цена/, "200000,5");
+    submitProduct();
+    expect(screen.getByText(/Граница цены должна быть целым/)).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('displays API validation errors and retains the previous successful table', async () => {
+  it("allows no competitors and removes or ignores unavailable competitors", async () => {
     await openApp();
-    fetchMock.mockResolvedValueOnce(respond({ error: 'Тело запроса должно быть массивом товаров.' }, 400));
-    fireEvent.change(screen.getByLabelText('Данные товаров'), { target: { value: '{}' } });
-    fireEvent.submit(screen.getByLabelText('Данные товаров').closest('form')!);
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('массивом товаров');
-    expect(alert.textContent).toContain('предыдущий успешный расчёт');
-    expect(screen.getByText('APL-15-128')).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Добавить товар" }));
+    fillProduct();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Добавить конкурента" }),
+    );
+    fill(/^Продавец/, "Нет в наличии");
+    fill(/^Цена конкурента/, "1");
+    fireEvent.click(screen.getByRole("checkbox", { name: "В наличии" }));
+    submitProduct();
+    await screen.findByText("MY-001");
+    fireEvent.click(screen.getByRole("button", { name: "Рассчитать цены" }));
+    await screen.findByText("Цены рассчитаны");
+    expect(screen.getByTitle("NO_COMPETITORS")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Редактировать Мой телефон" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Удалить конкурента 1" }),
+    );
+    submitProduct();
+    await waitFor(() => expect(catalog[0]?.competitors).toEqual([]));
   });
 
-  it('reports network failures and allows retry', async () => {
-    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
-    render(<App />);
-    expect((await screen.findByRole('alert')).textContent).toContain('Проверьте, что сервер запущен');
-    fetchMock.mockResolvedValueOnce(respond(expected));
-    fireEvent.click(screen.getByRole('button', { name: /Пересчитать цены/ }));
-    await screen.findByText('APL-15-128');
-    expect(screen.queryByRole('alert')).toBeNull();
+  it("edits and deletes the correct duplicate SKU, invalidating old results", async () => {
+    const input = [
+      { ...products[0]!, name: "Первый" },
+      { ...products[0]!, name: "Второй" },
+    ];
+    await openApp(input);
+    fireEvent.click(screen.getByRole("button", { name: "Рассчитать цены" }));
+    await screen.findByText("Цены рассчитаны");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Редактировать Второй" }),
+    );
+    fill(/^Название товара/, "Изменённый");
+    submitProduct();
+    await screen.findByText("Изменённый");
+    expect(screen.queryByText("Цены рассчитаны")).toBeNull();
+    expect(catalog[0]?.name).toBe("Первый");
+    fireEvent.click(screen.getByRole("button", { name: "Удалить Первый" }));
+    await waitFor(() => expect(catalog).toHaveLength(1));
+    expect(catalog[0]?.name).toBe("Изменённый");
   });
 
-  it('keeps duplicate SKU names associated by array order', async () => {
+  it("cancels edits without changing server data", async () => {
+    await openApp(products);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `Редактировать ${products[0]!.name}`,
+      }),
+    );
+    fill(/^Название товара/, "Несохранённое");
+    fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    expect(catalog).toEqual(products);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the form and original catalog when saving fails", async () => {
     await openApp();
-    const input = [{ ...products[0], name: 'Первый' }, { ...products[0], name: 'Второй' }];
-    fetchMock.mockResolvedValueOnce(respond([expected[0], expected[0]]));
-    fireEvent.change(screen.getByLabelText('Данные товаров'), { target: { value: JSON.stringify(input) } });
-    fireEvent.submit(screen.getByLabelText('Данные товаров').closest('form')!);
-    await screen.findByText('Первый');
-    const rows = screen.getAllByRole('row').slice(1);
-    expect(within(rows[0]!).getByText('Первый')).toBeTruthy();
-    expect(within(rows[1]!).getByText('Второй')).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Добавить товар" }));
+    fillProduct();
+    fetchMock.mockResolvedValueOnce(
+      respond(
+        { error: "Список изменён в другой вкладке.", code: "CONFLICT" },
+        409,
+      ),
+    );
+    submitProduct();
+    await screen.findByRole("alert");
+    expect(screen.getByRole("form", { name: "Форма товара" })).toBeTruthy();
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: /^Название товара/,
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("Мой телефон");
+    expect(catalog).toEqual([]);
+  });
+
+  it("filters server results and reports empty searches", async () => {
+    await openApp(products);
+    fireEvent.click(screen.getByRole("button", { name: "Рассчитать цены" }));
+    await screen.findByText("Цены рассчитаны");
+    fill(/Поиск по названию/, "dys");
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "AT_MAX" },
+    });
+    expect(screen.getByText(/Ничего не найдено/)).toBeTruthy();
+  });
+
+  it("appends valid JSON imports and rejects invalid input", async () => {
+    await openApp([products[0]!]);
+    const input = screen.getByLabelText("Данные товаров");
+    fireEvent.change(input, { target: { value: "{broken" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Некорректный JSON",
+    );
+    fireEvent.change(input, { target: { value: "{}" } });
+    fireEvent.submit(input.closest("form")!);
+    expect(screen.getByRole("alert").textContent).toContain("массив товаров");
+    fireEvent.change(input, {
+      target: { value: JSON.stringify([products[1]]) },
+    });
+    fireEvent.submit(input.closest("form")!);
+    await screen.findByText("DYS-V8");
+    expect(catalog).toHaveLength(2);
+  });
+
+  it("retains products on network failure and permits retry", async () => {
+    await openApp(products);
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    fireEvent.click(screen.getByRole("button", { name: "Рассчитать цены" }));
+    await screen.findByRole("alert");
+    expect(screen.getByText("APL-15-128")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Рассчитать цены" }));
+    await screen.findByText("Цены рассчитаны");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("Authentication UI", () => {
+  it("logs in using the server session", async () => {
+    fetchMock.mockResolvedValueOnce(
+      respond({ user, csrfToken: "b".repeat(64) }),
+    );
+    const onLogin = vi.fn();
+    render(<Auth onLogin={onLogin} link={null} />);
+    fireEvent.change(screen.getByLabelText("Электронная почта"), {
+      target: { value: user.email },
+    });
+    fireEvent.change(screen.getByLabelText("Пароль"), {
+      target: { value: "long-password" },
+    });
+    fireEvent.submit(screen.getByLabelText("Пароль").closest("form")!);
+    await waitFor(() => expect(onLogin).toHaveBeenCalledWith(user));
+  });
+  it("shows login errors and a verification resend option", async () => {
+    fetchMock.mockResolvedValueOnce(
+      respond({ error: "Подтвердите почту.", code: "EMAIL_UNVERIFIED" }, 403),
+    );
+    render(<Auth onLogin={vi.fn()} link={null} />);
+    fireEvent.submit(screen.getByLabelText("Пароль").closest("form")!);
+    await screen.findByRole("alert");
+    fireEvent.click(
+      screen.getByRole("button", { name: /Отправить подтверждение повторно/ }),
+    );
+    expect(screen.getByText("Подтверждение почты")).toBeTruthy();
+  });
+});
+
+describe("Provider controls", () => {
+  it("disables unavailable providers and explains the alternative", () => {
+    render(<OAuthButtons providers={{ google: false, apple: false }} />);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Войти через Google",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Войти через Apple",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(screen.getByText(/Используйте почту/)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("reports a failed start and lets the user retry", async () => {
+    fetchMock.mockResolvedValue(
+      respond({ error: "Провайдер недоступен" }, 503),
+    );
+    render(<OAuthButtons providers={{ google: true, apple: false }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Войти через Google" }));
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Провайдер недоступен",
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/oauth/google/start",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "X-CSRF-Token": "a".repeat(64) }),
+      }),
+    );
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Войти через Google",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 });
